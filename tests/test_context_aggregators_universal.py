@@ -10,6 +10,7 @@ from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
     FunctionCallFromLLM,
+    FunctionCallInProgressFrame,
     FunctionCallResultFrame,
     FunctionCallsStartedFrame,
     InterruptionFrame,
@@ -490,6 +491,47 @@ class TestLLMAssistantAggregator(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(should_stop, 2)
         self.assertEqual(stop_messages[0].content, "Hello")
         self.assertEqual(stop_messages[1].content, "Hello there!")
+
+    async def test_interruption_clears_function_calls_in_progress(self):
+        context = LLMContext()
+
+        aggregator = LLMAssistantAggregator(context)
+
+        function_call = FunctionCallFromLLM(
+            function_name="test_function",
+            tool_call_id="test_tool_call_id",
+            arguments={"arg1": "value1"},
+            context=context,
+        )
+
+        frames_to_send = [
+            LLMFullResponseStartFrame(),
+            FunctionCallsStartedFrame(function_calls=[function_call]),
+            FunctionCallInProgressFrame(
+                function_name="test_function",
+                tool_call_id="test_tool_call_id",
+                arguments={"arg1": "value1"},
+            ),
+            SleepFrame(),
+            InterruptionFrame(),  # Interruption while function call is in progress
+        ]
+        await run_test(
+            aggregator,
+            frames_to_send=frames_to_send,
+            expected_down_frames=[InterruptionFrame],
+        )
+
+        # Verify function calls in progress are cleared
+        self.assertFalse(aggregator.has_function_calls_in_progress)
+
+        # Verify context was updated with CANCELLED status
+        messages = context.get_messages()
+        cancelled_message = next(
+            (m for m in messages if m.get("role") == "tool" and m.get("content") == "CANCELLED"),
+            None,
+        )
+        self.assertIsNotNone(cancelled_message)
+        self.assertEqual(cancelled_message["tool_call_id"], "test_tool_call_id")
 
     async def test_thought(self):
         context = LLMContext()

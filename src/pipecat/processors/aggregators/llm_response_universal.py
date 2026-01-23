@@ -811,6 +811,16 @@ class LLMAssistantAggregator(LLMContextAggregator):
     async def _handle_interruptions(self, frame: InterruptionFrame):
         await self._trigger_assistant_turn_stopped()
         self._started = 0
+
+        # Update context with cancellation for each function call that was in progress.
+        for tool_call_id, function_call in list(self._function_calls_in_progress.items()):
+            if function_call:
+                self._update_function_call_result(
+                    function_call.function_name, tool_call_id, "CANCELLED"
+                )
+        self._function_calls_in_progress.clear()
+        self._function_calls_image_results.clear()
+
         await self.reset()
 
     async def _handle_function_calls_started(self, frame: FunctionCallsStartedFrame):
